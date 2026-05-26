@@ -41,6 +41,7 @@ const Tasks = () => {
       } else {
         toast.info('Task marked as pending');
       }
+      window.dispatchEvent(new Event('taskUpdated'));
       load();
     } catch (err) {
       const errorMsg = err.response?.data?.message || 'Toggle failed';
@@ -54,6 +55,7 @@ const Tasks = () => {
     try {
       await api.delete(`/tasks/${task._id}`);
       toast.success('Task deleted successfully 🗑️');
+      window.dispatchEvent(new Event('taskUpdated'));
       load();
     } catch (err) {
       const errorMsg = err.response?.data?.message || 'Delete failed';
@@ -82,6 +84,7 @@ const Tasks = () => {
         toast.success('Task created successfully! ✨');
       }
       setModalOpen(false);
+      window.dispatchEvent(new Event('taskUpdated'));
       load();
     } catch (err) {
       const errorMsg = err.response?.data?.message || 'Save failed';

@@ -17,25 +17,39 @@ const Dashboard = () => {
   const [recent, setRecent] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const res = await api.get('/analytics');
+      setSummary(res.data.summary || {});
+    } catch (err) {
+      console.error('Analytics load failed:', err.message);
+      toast.error('Failed to load analytics');
+    }
+
+    try {
+      const t = await api.get('/tasks');
+      setRecent((t.data || []).slice(0, 5));
+    } catch (err) {
+      console.error('Tasks load failed:', err.message);
+      toast.error('Failed to load tasks');
+    }
+
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await api.get('/analytics');
-        setSummary(res.data.summary || {});
-      } catch (err) {
-        console.warn('Analytics load failed', err.message);
-      }
+    loadData();
 
-      try {
-        const t = await api.get('/tasks');
-        setRecent((t.data || []).slice(0, 5));
-      } catch (err) {
-        console.warn('Tasks load failed', err.message);
-      }
+    // Listen for storage changes (task updates from other pages)
+    window.addEventListener('storage', loadData);
+    // Custom event for task updates
+    window.addEventListener('taskUpdated', loadData);
 
-      setLoading(false);
+    return () => {
+      window.removeEventListener('storage', loadData);
+      window.removeEventListener('taskUpdated', loadData);
     };
-    load();
   }, []);
 
   const userName = localStorage.getItem('userName') || 'Student';
