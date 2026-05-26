@@ -17,21 +17,7 @@ const app = express();
 
 // Middleware
 const corsOptions = {
-  origin: function (origin, callback) {
-    const whitelist = [
-      'http://localhost:5175',
-      'http://localhost:3000',
-      'https://study-planner-tau.vercel.app',
-      process.env.FRONTEND_URL,
-    ].filter(Boolean);
-
-    if (!origin || whitelist.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.warn(`CORS blocked request from ${origin}`);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
