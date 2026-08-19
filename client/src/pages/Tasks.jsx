@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Plus, Filter, Search, SortAsc, ChevronDown } from 'lucide-react';
 import { toast } from 'react-toastify';
@@ -16,12 +16,28 @@ const Tasks = () => {
   const [editingTask, setEditingTask] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  const logApiError = (action, err) => {
+    const status = err.response?.status;
+    const backendMessage = err.response?.data?.message || err.message || 'Unknown error';
+    console.error(`[Task API] ${action} failed`, {
+      status,
+      url: err.config?.url,
+      method: err.config?.method,
+      backendMessage,
+      responseData: err.response?.data,
+    });
+    return `${action} failed: ${backendMessage}${status ? ` (HTTP ${status})` : ''}`;
+  };
+
   const load = async () => {
     try {
-      const res = await api.get('/tasks');
+      // Cache-busting: add timestamp to force fresh data
+      const timestamp = new Date().getTime();
+      const res = await api.get(`/tasks?t=${timestamp}`);
       setTasks(res.data || []);
+      console.log('[Tasks] Loaded', (res.data || []).length, 'tasks');
     } catch (err) {
-      console.warn(err.message);
+      console.error('[Tasks] Load error:', err.message);
     } finally {
       setLoading(false);
     }
@@ -31,36 +47,48 @@ const Tasks = () => {
     load();
   }, []);
 
+  const broadcastTaskUpdate = () => {
+    const timestamp = new Date().toISOString();
+    const updateEvent = new CustomEvent('taskUpdated', {
+      detail: { updatedAt: timestamp },
+    });
+    window.dispatchEvent(updateEvent);
+    localStorage.setItem('taskUpdatedAt', timestamp);
+    console.log('[Tasks] Broadcasting update at', timestamp);
+  };
+
   const handleToggle = async (task) => {
     try {
       const newStatus = task.status === 'completed' ? 'pending' : 'completed';
-      const updated = { ...task, status: newStatus };
-      await api.put(`/tasks/${task._id}`, updated);
+      console.log(`[Tasks] Toggling task ${task._id} status to ${newStatus}`);
+      const response = await api.put(`/tasks/${task._id}`, { ...task, status: newStatus });
+      const updatedTask = response.data;
       if (newStatus === 'completed') {
         toast.success('Task completed! 🎉');
       } else {
         toast.info('Task marked as pending');
       }
-      window.dispatchEvent(new Event('taskUpdated'));
-      load();
+      setTasks((prevTasks) => prevTasks.map((t) => (t._id === task._id ? updatedTask : t)));
+      console.log('[Tasks] Task toggled, broadcasting update');
+      broadcastTaskUpdate();
     } catch (err) {
-      const errorMsg = err.response?.data?.message || 'Toggle failed';
+      const errorMsg = logApiError('Toggle task status', err);
       toast.error(errorMsg);
-      console.error('Toggle failed:', err);
     }
   };
 
   const handleDelete = async (task) => {
     if (!window.confirm('Are you sure you want to delete this task? This action cannot be undone.')) return;
     try {
+      console.log(`[Tasks] Deleting task ${task._id}`);
       await api.delete(`/tasks/${task._id}`);
+      setTasks((prevTasks) => prevTasks.filter((t) => t._id !== task._id));
       toast.success('Task deleted successfully 🗑️');
-      window.dispatchEvent(new Event('taskUpdated'));
-      load();
+      console.log('[Tasks] Task deleted, broadcasting update');
+      broadcastTaskUpdate();
     } catch (err) {
-      const errorMsg = err.response?.data?.message || 'Delete failed';
+      const errorMsg = logApiError('Delete task', err);
       toast.error(errorMsg);
-      console.error('Delete failed:', err);
     }
   };
 
@@ -77,38 +105,52 @@ const Tasks = () => {
   const handleSave = async (form) => {
     try {
       if (editingTask && editingTask._id) {
-        await api.put(`/tasks/${editingTask._id}`, { ...editingTask, ...form });
+        console.log(`[Tasks] Updating task ${editingTask._id}`);
+        const response = await api.put(`/tasks/${editingTask._id}`, { ...editingTask, ...form });
+        const updatedTask = response.data;
+        setTasks((prevTasks) => prevTasks.map((t) => (t._id === updatedTask._id ? updatedTask : t)));
         toast.success('Task updated successfully! ✅');
       } else {
-        await api.post('/tasks', form);
+        console.log('[Tasks] Creating new task');
+        const response = await api.post('/tasks', form);
+        const newTask = response.data;
+        setTasks((prevTasks) => [newTask, ...prevTasks]);
         toast.success('Task created successfully! ✨');
       }
       setModalOpen(false);
-      window.dispatchEvent(new Event('taskUpdated'));
-      load();
+      console.log('[Tasks] Task saved, broadcasting update');
+      broadcastTaskUpdate();
     } catch (err) {
-      const errorMsg = err.response?.data?.message || 'Save failed';
+      const errorMsg = logApiError('Save task', err);
       toast.error(errorMsg);
     }
   };
 
-  const subjects = Array.from(new Set(tasks.map((t) => t.subject).filter(Boolean)));
   const priorityLabels = { 1: 'High', 2: 'Medium', 3: 'Low' };
 
-  const filtered = tasks
-    .filter((t) => (subjectFilter === 'all' ? true : t.subject === subjectFilter))
-    .filter((t) => (statusFilter === 'all' ? true : t.status === statusFilter))
-    .filter(
-      (t) =>
-        t.title.toLowerCase().includes(query.toLowerCase()) ||
-        (t.description || '').toLowerCase().includes(query.toLowerCase())
-    )
-    .sort((a, b) => {
-      if (sortBy === 'deadline') return new Date(a.deadline || 0) - new Date(b.deadline || 0);
-      if (sortBy === 'priority') return (a.priority || 3) - (b.priority || 3);
-      if (sortBy === 'title') return a.title.localeCompare(b.title);
-      return 0;
-    });
+  const subjects = useMemo(
+    () => Array.from(new Set(tasks.map((t) => t.subject).filter(Boolean))),
+    [tasks]
+  );
+
+  const filtered = useMemo(
+    () =>
+      tasks
+        .filter((t) => (subjectFilter === 'all' ? true : t.subject === subjectFilter))
+        .filter((t) => (statusFilter === 'all' ? true : t.status === statusFilter))
+        .filter(
+          (t) =>
+            t.title.toLowerCase().includes(query.toLowerCase()) ||
+            (t.description || '').toLowerCase().includes(query.toLowerCase())
+        )
+        .sort((a, b) => {
+          if (sortBy === 'deadline') return new Date(a.deadline || 0) - new Date(b.deadline || 0);
+          if (sortBy === 'priority') return (a.priority || 3) - (b.priority || 3);
+          if (sortBy === 'title') return a.title.localeCompare(b.title);
+          return 0;
+        }),
+    [tasks, query, subjectFilter, statusFilter, sortBy]
+  );
 
   const containerVariants = {
     hidden: { opacity: 0 },

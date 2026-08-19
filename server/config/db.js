@@ -13,11 +13,8 @@ const connectDB = async () => {
     process.exit(1);
   }
 
-  // Recommended connection options
   const options = {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 10000, // 10 seconds
+    serverSelectionTimeoutMS: 10000,
   };
 
   // Retry loop for transient TLS/DNS/network issues

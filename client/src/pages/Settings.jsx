@@ -277,7 +277,7 @@ const Settings = () => {
         className="p-4 rounded-lg bg-gray-100 dark:bg-gray-700 text-center"
       >
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          Need help? <a href="#" className="text-indigo-600 dark:text-indigo-400 hover:underline">Contact Support</a>
+          Need help? <button type="button" className="text-indigo-600 dark:text-indigo-400 hover:underline focus:outline-none">Contact Support</button>
         </p>
       </motion.div>
     </motion.div>

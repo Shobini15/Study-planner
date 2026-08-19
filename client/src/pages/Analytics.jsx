@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { toast } from 'react-toastify';
 import {
@@ -34,21 +34,69 @@ const Analytics = () => {
     weeklyProductivity: [],
   });
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const debounceTimerRef = useRef(null);
+  const isLoadingRef = useRef(false);
+
+  const loadData = useCallback(async (isInitial = false) => {
+    if (isLoadingRef.current) return;
+    isLoadingRef.current = true;
+
+    if (isInitial) {
+      setLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
+
+    try {
+      const timestamp = new Date().getTime();
+      const res = await api.get(`/analytics?t=${timestamp}`);
+      setData(res.data || {});
+      console.log('[Analytics] Data refreshed:', res.data?.summary || {});
+    } catch (err) {
+      console.warn('[Analytics] Load error:', err.message || err);
+      toast.error('Failed to load analytics data');
+    } finally {
+      isLoadingRef.current = false;
+      if (isInitial) {
+        setLoading(false);
+      } else {
+        setIsRefreshing(false);
+      }
+    }
+  }, []);
+
+  const handleTaskUpdate = useCallback(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      console.log('[Analytics] Task update detected, refreshing analytics...');
+      loadData(false);
+    }, 300);
+  }, [loadData]);
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await api.get('/analytics');
-        setData(res.data || {});
-      } catch (err) {
-        console.warn(err.message);
-        toast.error('Failed to load analytics data');
-      } finally {
-        setLoading(false);
+    loadData(true);
+
+    const handleTaskEvent = () => handleTaskUpdate();
+    const handleStorageEvent = (event) => {
+      if (event.key === 'taskUpdatedAt') {
+        handleTaskUpdate();
       }
     };
-    load();
-  }, []);
+
+    window.addEventListener('taskUpdated', handleTaskEvent);
+    window.addEventListener('storage', handleStorageEvent);
+
+    return () => {
+      window.removeEventListener('taskUpdated', handleTaskEvent);
+      window.removeEventListener('storage', handleStorageEvent);
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [handleTaskUpdate, loadData]);
 
   const pieData = [
     { name: 'Completed', value: data.summary.completedTasks || 0, color: '#10B981' },

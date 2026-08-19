@@ -7,12 +7,16 @@ const mongoose = require('mongoose');
 const getAnalytics = async (req, res) => {
   try {
     const userId = req.user._id;
+    const requestTime = new Date().toISOString();
+    console.log(`[Analytics] Fetching analytics for user ${userId} at ${requestTime}`);
 
     // 1. Basic Stats (Total, Completed, Pending, Rate)
     const totalTasks = await Task.countDocuments({ userId });
     const completedTasks = await Task.countDocuments({ userId, status: 'completed' });
     const pendingTasks = await Task.countDocuments({ userId, status: 'pending' });
     const completionPercentage = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+    console.log(`[Analytics] Summary - Total: ${totalTasks}, Completed: ${completedTasks}, Pending: ${pendingTasks}, %: ${completionPercentage}`);
 
     // 2. Subject-wise Stats (Total & Completed per subject)
     const subjectStats = await Task.aggregate([
@@ -46,6 +50,8 @@ const getAnalytics = async (req, res) => {
       },
       { $sort: { subject: 1 } },
     ]);
+
+    console.log(`[Analytics] Subject stats computed for ${subjectStats.length} subjects`);
 
     // 3. Weekly Productivity (Completed tasks grouped by day of week)
     // We will look at tasks marked as completed, grouped by their updatedAt day.
@@ -89,7 +95,9 @@ const getAnalytics = async (req, res) => {
       });
     }
 
-    res.json({
+    console.log(`[Analytics] Weekly productivity computed, total completed in last 7 days: ${weeklyProductivity.reduce((sum, day) => sum + day.completedCount, 0)}`);
+
+    const responseData = {
       summary: {
         totalTasks,
         completedTasks,
@@ -98,9 +106,12 @@ const getAnalytics = async (req, res) => {
       },
       subjectStats,
       weeklyProductivity,
-    });
+    };
+    
+    console.log(`[Analytics] Returning analytics response for user ${userId}`);
+    res.json(responseData);
   } catch (error) {
-    console.error(error);
+    console.error('[Analytics] Error fetching analytics:', error);
     res.status(500).json({ message: error.message });
   }
 };

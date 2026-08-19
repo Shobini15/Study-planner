@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
+import { Link } from 'react-router-dom';
 import { BookOpen, CheckCircle2, Clock, TrendingUp, Plus } from 'lucide-react';
 import { toast } from 'react-toastify';
 import StatCard from '../components/StatCard';
 import ProgressCircle from '../components/ProgressCircle';
 import TaskCard from '../components/TaskCard';
+import TaskModal from '../components/TaskModal';
 import api from '../services/api';
 
 const Dashboard = () => {
@@ -15,42 +17,157 @@ const Dashboard = () => {
     completionPercentage: 0,
   });
   const [recent, setRecent] = useState([]);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const loadData = async () => {
-    try {
+  // Refs for managing debounce and prevent concurrent loads
+  const debounceTimerRef = useRef(null);
+  const isLoadingRef = useRef(false);
+  const isInitialLoadRef = useRef(true);
+
+  // Reload data with cache-busting
+  const loadData = useCallback(async (isInitial = false) => {
+    // Prevent concurrent loads
+    if (isLoadingRef.current) return;
+    isLoadingRef.current = true;
+
+    // Show loading only on initial load, not on updates
+    if (isInitial) {
       setLoading(true);
-      const res = await api.get('/analytics');
-      setSummary(res.data.summary || {});
-    } catch (err) {
-      console.error('Analytics load failed:', err.message);
-      toast.error('Failed to load analytics');
+    } else {
+      setIsRefreshing(true);
     }
 
     try {
-      const t = await api.get('/tasks');
-      setRecent((t.data || []).slice(0, 5));
-    } catch (err) {
-      console.error('Tasks load failed:', err.message);
-      toast.error('Failed to load tasks');
-    }
+      // Cache-busting: add timestamp to force fresh data
+      const timestamp = new Date().getTime();
+      const [analyticsRes, tasksRes] = await Promise.allSettled([
+        api.get(`/analytics?t=${timestamp}`),
+        api.get(`/tasks?t=${timestamp}`),
+      ]);
 
-    setLoading(false);
+      const taskResults = tasksRes.status === 'fulfilled' ? tasksRes.value.data || [] : [];
+      const fallbackSummary = {
+        totalTasks: taskResults.length,
+        completedTasks: taskResults.filter((task) => task.status === 'completed').length,
+        pendingTasks: taskResults.filter((task) => task.status === 'pending').length,
+        completionPercentage:
+          taskResults.length > 0
+            ? Math.round((taskResults.filter((task) => task.status === 'completed').length / taskResults.length) * 100)
+            : 0,
+      };
+
+      if (analyticsRes.status === 'fulfilled') {
+        console.log('[Dashboard] Analytics updated:', analyticsRes.value.data.summary);
+      } else {
+        console.error('[Dashboard] Analytics load failed:', analyticsRes.reason?.message || analyticsRes.reason);
+      }
+
+      // Always prefer the live task list totals to avoid stale analytics summary values.
+      setSummary(fallbackSummary);
+
+      if (tasksRes.status === 'fulfilled') {
+        const taskList = (tasksRes.value.data || []).slice(0, 5);
+        setRecent(taskList);
+        console.log('[Dashboard] Recent tasks updated:', taskList.length);
+      } else {
+        console.error('[Dashboard] Tasks load failed:', tasksRes.reason?.message || tasksRes.reason);
+      }
+    } catch (err) {
+      console.error('[Dashboard] Unexpected error:', err);
+    } finally {
+      isLoadingRef.current = false;
+      if (isInitial) {
+        setLoading(false);
+        isInitialLoadRef.current = false;
+      } else {
+        setIsRefreshing(false);
+      }
+    }
+  }, []);
+
+  // Debounced update handler
+  const logApiError = (action, err) => {
+    const status = err.response?.status;
+    const backendMessage = err.response?.data?.message || err.message || 'Unknown error';
+    console.error(`[Dashboard] ${action} failed`, {
+      status,
+      url: err.config?.url,
+      method: err.config?.method,
+      backendMessage,
+      responseData: err.response?.data,
+    });
+    return `${action} failed: ${backendMessage}${status ? ` (HTTP ${status})` : ''}`;
   };
 
-  useEffect(() => {
-    loadData();
+  const broadcastTaskUpdate = () => {
+    const timestamp = new Date().toISOString();
+    window.dispatchEvent(new CustomEvent('taskUpdated', {
+      detail: { updatedAt: timestamp },
+    }));
+    localStorage.setItem('taskUpdatedAt', timestamp);
+    console.log('[Dashboard] Broadcasting task update at', timestamp);
+  };
 
-    // Listen for storage changes (task updates from other pages)
-    window.addEventListener('storage', loadData);
-    // Custom event for task updates
-    window.addEventListener('taskUpdated', loadData);
+  const handleCreate = () => {
+    setEditingTask(null);
+    setModalOpen(true);
+  };
+
+  const handleSave = async (form) => {
+    try {
+      const response = await api.post('/tasks', form);
+      const newTask = response.data;
+      setRecent((prev) => [newTask, ...prev].slice(0, 5));
+      toast.success('Task created successfully! ✨');
+      setModalOpen(false);
+      broadcastTaskUpdate();
+      loadData(false);
+    } catch (err) {
+      const errorMsg = logApiError('Create task', err);
+      toast.error(errorMsg);
+    }
+  };
+
+  const handleTaskUpdate = useCallback(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    debounceTimerRef.current = setTimeout(() => {
+      console.log('[Dashboard] Task update detected, refreshing...');
+      loadData(false);
+    }, 300); // Wait 300ms after the last update before refreshing
+  }, [loadData]);
+
+  useEffect(() => {
+    // Initial load
+    loadData(true);
+
+    // Event listeners for task updates
+    const handleTaskChange = () => {
+      handleTaskUpdate();
+    };
+
+    const handleStorageUpdate = (event) => {
+      if (event.key === 'taskUpdatedAt') {
+        handleTaskUpdate();
+      }
+    };
+
+    window.addEventListener('taskUpdated', handleTaskChange);
+    window.addEventListener('storage', handleStorageUpdate);
 
     return () => {
-      window.removeEventListener('storage', loadData);
-      window.removeEventListener('taskUpdated', loadData);
+      window.removeEventListener('taskUpdated', handleTaskChange);
+      window.removeEventListener('storage', handleStorageUpdate);
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
     };
-  }, []);
+  }, [loadData, handleTaskUpdate]);
 
   const userName = localStorage.getItem('userName') || 'Student';
   const hour = new Date().getHours();
@@ -105,7 +222,10 @@ const Dashboard = () => {
             Here's your study progress for today
           </p>
         </div>
-        <button className="mt-4 md:mt-0 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition flex items-center gap-2 font-medium">
+        <button
+          onClick={handleCreate}
+          className="mt-4 md:mt-0 px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition flex items-center gap-2 font-medium"
+        >
           <Plus size={18} />
           New Task
         </button>
@@ -157,9 +277,9 @@ const Dashboard = () => {
           <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 shadow-sm hover:shadow-md transition">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">Recent Tasks</h2>
-              <a href="/tasks" className="text-indigo-600 hover:text-indigo-700 text-sm font-medium">
+              <Link to="/tasks" className="text-indigo-600 hover:text-indigo-700 text-sm font-medium">
                 View all →
-              </a>
+              </Link>
             </div>
 
             {recent.length === 0 ? (
@@ -214,9 +334,12 @@ const Dashboard = () => {
                 </p>
               </div>
 
-              <button className="w-full py-2 px-3 rounded-lg bg-white text-indigo-600 font-semibold hover:bg-white/90 transition text-sm mt-4">
+              <Link
+                to="/analytics"
+                className="w-full inline-flex items-center justify-center py-2 px-3 rounded-lg bg-white text-indigo-600 font-semibold hover:bg-white/90 transition text-sm mt-4"
+              >
                 View Analytics
-              </button>
+              </Link>
             </div>
           </div>
         </motion.div>
@@ -248,6 +371,7 @@ const Dashboard = () => {
           <p className="text-xs text-purple-600 dark:text-purple-400 mt-2">Coming up</p>
         </div>
       </motion.div>
+      <TaskModal open={modalOpen} onClose={() => setModalOpen(false)} onSave={handleSave} task={editingTask} />
     </motion.div>
   );
 };
