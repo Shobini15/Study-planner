@@ -10,10 +10,15 @@ const authRoutes = require('./routes/authRoutes');
 const taskRoutes = require('./routes/taskRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
 
-// Initialize database
-connectDB();
-
 const app = express();
+let databaseConnection;
+
+const ensureDatabaseConnection = () => {
+  if (!databaseConnection) {
+    databaseConnection = connectDB();
+  }
+  return databaseConnection;
+};
 
 // Middleware
 const corsOptions = {
@@ -33,6 +38,15 @@ app.use((req, res, next) => {
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
   next();
+});
+
+app.use('/api', async (req, res, next) => {
+  try {
+    await ensureDatabaseConnection();
+    next();
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Log requests in development
@@ -67,17 +81,11 @@ app.use((err, req, res, next) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
+if (!process.env.VERCEL && require.main === module) {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+  });
+}
 
-const server = app.listen(PORT, () => {
-  console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
-});
-
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(`Port ${PORT} is already in use. Stop the other process or set a different PORT in your .env file.`);
-    process.exit(1);
-  }
-  console.error(err);
-  process.exit(1);
-});
+module.exports = app;

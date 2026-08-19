@@ -4,13 +4,11 @@ const connectDB = async () => {
   const uri = process.env.MONGODB_URI;
 
   if (!uri) {
-    console.error('Database Connection Error: MONGODB_URI is not set. Please add it to your .env file.');
-    process.exit(1);
+    throw new Error('MONGODB_URI is not set. Configure it in the deployment environment.');
   }
 
   if (uri.includes('<username>') || uri.includes('<password>')) {
-    console.error('Database Connection Error: MONGODB_URI contains placeholder credentials. Replace <username> and <password> in your .env with real Atlas credentials.');
-    process.exit(1);
+    throw new Error('MONGODB_URI contains placeholder credentials. Configure a real MongoDB connection string.');
   }
 
   const options = {
@@ -41,8 +39,7 @@ const connectDB = async () => {
         continue;
       }
 
-      console.error('Failed to connect to MongoDB after multiple attempts. Exiting.');
-      process.exit(1);
+      throw error;
     }
   }
 };
